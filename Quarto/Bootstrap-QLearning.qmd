@@ -1,0 +1,398 @@
+---
+title: "Combining Q-Learning with Bootstrap"
+author: "Rubí Jiménez"
+date: "09/23/2025"
+format:
+  html:
+    code-fold: true
+engine: julia
+---
+
+# Taller: *Explorando el bootstrap en Machine Learning*
+
+**Tema aplicado:** ¿Es posible combinar bootstrap y Q-learning para mejorar el desempeño en un juego de laberinto 6×6 (tipo Pac-Man)?
+
+------------------------------------------------------------------------
+
+## Preliminares
+
+### ¿Qué es Bootstrap?
+
+Bootstrap es un **método estadístico de remuestreo**. La idea principal es:
+
+-   Dado un conjunto de datos (D) de tamaño (n), generamos **muestras nuevas** de tamaño (n) tomando datos **al azar con reemplazo**.\
+-   Esto significa que en cada muestra, algunos datos se pueden repetir y otros pueden no aparecer.\
+-   Cada muestra se llama **bootstrap sample**.
+
+El propósito principal de esta técnica es estimar la variabilidad de las predicciones o los parámetros de un modelo utilizando solo los datos disponibles.
+
+------------------------------------------------------------------------
+
+### Q-Learning
+
+#### 1. Definición
+
+Algoritmo de **aprendizaje por refuerzo** donde un agente aprende a maximizar la **recompensa acumulada** mediante una función de valor de acción (Q(s,a)).
+
+#### 2. Elementos
+
+-   **Agente**: quien aprende.\
+-   **Entorno**: mundo con el que interactúa.\
+-   **Estado (s)**: situación actual.\
+-   **Acción (a)**: decisión posible.\
+-   **Recompensa (r)**: retroalimentación.\
+-   **Política (π)**: estrategia que indica qué acción elegir en cada estado.
+
+#### 3. Función Q
+
+$Q(s,a)$
+
+-   Estima el valor esperado de tomar (a) en (s).\
+-   ($\gamma$): factor de descuento.
+
+#### 4. Actualización
+
+$$Q(s,a) \leftarrow Q(s,a) + \alpha \Big[ r + \gamma \max_{a'} Q(s',a') - Q(s,a) \Big]$$
+
+-   ($\alpha$): tasa de aprendizaje.\
+-   (r): recompensa inmediata.\
+-   (s'): nuevo estado.
+
+#### 5. Políticas y Exploración vs Explotación
+
+-   **Política (π):** Secuencia de acciones que maximizan a (Q(s,a)) a partir de un estado inicial dado.\
+-   En Q-Learning se usa comúnmente la **política ε-greedy**:
+    -   Con prob. (ε): elegir una acción aleatoria (explorar).\
+    -   Con prob. (1-ε): elegir la mejor acción conocida según Q (explotar).
+
+#### 6. Algoritmo
+
+1.  Inicializar todos los valores $Q(s,a)$ en cero.\
+2.  Repetir por episodios:
+    -   Estado inicial (s).\
+    -   Mientras no sea terminal:
+        1.  Elegir acción (a) con la política ε-greedy.\
+        2.  Ejecutar (a), observar recompensa (r) y nuevo estado (s').\
+        3.  Actualizar $Q(s,a)$ con la regla de aprendizaje.\
+        4.  Pasar al siguiente estado: (s \leftarrow s').
+3.  Repetir hasta que la política converja (ocurre cuando, después de suficientes episodios, los valores (Q(s,a)) dejan de cambiar de manera significativa.).
+
+------------------------------------------------------------------------
+
+## Parte A: Fundamentos
+
+### 1. Re-muestreo con reemplazo
+
+-   Considera una secuencia de recompensas obtenidas en episodios de entrenamiento: `{+1, 0, −1}`.\
+-   A continuación se generan manualmente algunos remuestreos de tamaño 3 con reemplazo.\
+-   Finalmente, se calcula la media de cada remuestreo.
+
+```{julia}
+#| echo: true
+
+#Ejemplo en Julia using Random
+using Random
+using Statistics
+
+Random.seed!(1234)
+
+data = [1, 0, -1] 
+n = 3
+
+for i in 1:5 
+  sample = rand(data, n) 
+  println("bootstrap sample: ", sample, " Media: ", mean(sample)) 
+end
+```
+
+**Interpretación:** En este caso el agente no tiene un comportamiento claramente “bueno” o “malo” aún; su rendimiento varía bastante según los episodios que se consideren.
+
+### 2. Intervalos de confianza bootstrap
+
+-   Enseguida se realiza la simulación de los resultados de 20 episodios de un agente.
+-   Se calcula la media.
+-   Posteriormente, se genera 1000 remuestreos bootstrap y se contruye un intervalo de confianza.
+
+```{julia}
+#| include: false
+import Pkg
+Pkg.add("Plots")
+Pkg.add("DataFrames")
+```
+
+```{julia}
+#| echo: true
+using Random
+using Statistics
+using Plots
+Random.seed!(1234)
+
+# Simulación de 20 recompensas acumuladas
+recompensas = rand(-5:15, 20)
+media_obs = mean(recompensas)
+
+# Bootstrap
+B = 1000
+boot_means = [mean(rand(recompensas, length(recompensas))) for _ in 1:B] #contiene las 1000 medias bootstrap.
+
+# Intervalo de confianza 95%
+ic_low = quantile(boot_means, 0.025)
+ic_high = quantile(boot_means, 0.975)
+
+# Mostrar media observada y IC
+println("Media observada: ", media_obs)
+println("IC 95%: (", ic_low, ", ", ic_high, ")")
+
+# --- Gráfico ---
+histogram(
+    boot_means,
+    bins = 30,
+    xlabel = "Medias Bootstrap",
+    ylabel = "Frecuencia",
+    title = "Distribución de medias Bootstrap",
+    legend = false,
+    alpha = 0.1,
+    color = :skyblue
+)
+
+# Añadir líneas para media observada y el intervalo de confianza
+vline!([media_obs], color=:red, lw=2, label="Media observada")
+vline!([ic_low, ic_high], color=:green, lw=2, linestyle=:dash, label="IC 95%")
+
+```
+
+#### Resultados del Bootstrap.
+
+A partir de la simulación de recompensas acumuladas, la media observada (6.85) es nuestra mejor estimación puntual del desempeño del agente. Sin embargo, el intervalo de confianza bootstrap muestra que el valor real de la media podría estar entre **4.5 y 9.15** con un 95% de confianza.
+
+El intervalo moderadamente amplio encontrado refleja que el desempeño todavía depende bastante de la muestra de episodios observados.
+
+### 3. Bootstrap y validación del Q-learning.
+
+Implementación de Q-learning básico en un laberinto 6×6:
+
+- Estados = posiciones.
+- Acciones = mover arriba/abajo/izquierda/derecha.
+
+Para mayor facilidad de la interpretación, defina al laberinto como una matriz de 6×6, se construira un escenario en el cual el inicio está en la posición (1,1) y la salida (meta) en la posición (6,6) además de tener varios obstaculos. 
+
+El objetivo es encontrar un recorrido óptimo para llegar a la salida del laberinto.
+
+![Laberinto 6x6](ImagenesBootstrap/Laberinto.png){width=50% fig-align="center"}
+
+
+#### Implementación de Q-Learning en Julia:
+
+
+```{julia}
+#| echo: true
+using Random
+using DataFrames
+using Statistics
+
+# -------------------------
+# Definición del laberinto
+# -------------------------
+maze = [
+    1  0  0  0  0  0;
+   -1 -1 -1 -1 -1  0;
+    0  0  0  0  0  0;
+    0 -1 -1 -1 -1 -1;
+    0  0  0  0  0  0;
+    0  0  0  0  0  2
+]
+
+# -------------------------
+# Funciones auxiliares
+# -------------------------
+function state_index(i,j)
+    return (i-1)*6 + (j-1) + 1
+end
+
+function find_start(maze)
+    for i in 1:6, j in 1:6
+        if maze[i,j] == 1
+            return (i,j)
+        end
+    end
+end
+
+actions = Dict(1 => (-1,0), 2 => (1,0), 3 => (0,-1), 4 => (0,1)) # Arriba, Abajo, Izq, Der
+
+function step(state, action, maze)
+    i, j = state
+    di, dj = actions[action]
+    ni, nj = i+di, j+dj
+
+    if ni < 1 || ni > 6 || nj < 1 || nj > 6
+        return state, -10, true
+    elseif maze[ni,nj] == -1
+        return state, -10, true
+    elseif maze[ni,nj] == 2
+        return (ni,nj), 10, true
+    else
+        return (ni,nj), -1, false
+    end
+end
+
+# -------------------------
+# Q-learning
+# -------------------------
+function qlearning(maze; episodes=2000, α=0.1, γ=0.9, ε=0.3)
+    Q = zeros(36,4)
+    rewards = []
+
+    for ep in 1:episodes
+        state = find_start(maze)
+        total_reward = 0
+        done = false
+
+        while !done
+            s_idx = state_index(state...)
+            # ε-greedy
+            if rand() < ε
+                a = rand(1:4)
+            else
+                a = argmax(Q[s_idx,:])
+            end
+
+            new_state, r, done = step(state, a, maze)
+            ns_idx = state_index(new_state...)
+            Q[s_idx,a] = Q[s_idx,a] + α*(r + γ*maximum(Q[ns_idx,:]) - Q[s_idx,a])
+            state = new_state
+            total_reward += r
+        end
+        push!(rewards, total_reward)
+    end
+
+    return Q, rewards
+end
+
+# -------------------------
+# Simulación de recorrido óptimo
+# -------------------------
+function simulate_policy(Q, maze; max_steps=50)
+    state = find_start(maze)
+    path = [state]
+    done = false
+    steps = 0
+    while !done && steps < max_steps
+        s_idx = state_index(state...)
+        a = argmax(Q[s_idx,:])   # política fija
+        state, _, done = step(state, a, maze)
+        push!(path, state)
+        steps += 1
+    end
+    return path
+end
+
+# -------------------------
+# Simulación de recompensas
+# -------------------------
+function simulate_rewards(Q, maze; episodes=100, max_steps=50)
+    rewards = []
+    for ep in 1:episodes
+        state = find_start(maze)
+        total_reward = 0
+        done = false
+        steps = 0
+        while !done && steps < max_steps
+            s_idx = state_index(state...)
+            a = argmax(Q[s_idx,:])
+            state, r, done = step(state, a, maze)
+            total_reward += r
+            steps += 1
+        end
+        push!(rewards, total_reward)
+    end
+    return rewards
+end
+
+# -------------------------
+# Imprimir recorrido en laberinto
+# -------------------------
+function print_path(maze, path)
+    m = copy(maze)
+    for (i,j) in path
+        if m[i,j] == 0
+            m[i,j] = 9   # marcar recorrido
+        end
+    end
+    println("Laberinto recorrido (9 = camino):")
+    display(m)
+end
+
+# -------------------------
+# Bootstrap sobre recompensas
+# -------------------------
+function bootstrap(data; B=1000)
+    n = length(data)
+    medias = [mean(rand(data, n)) for _ in 1:B]
+    return medias
+end
+
+# -------------------------
+# Entrenamiento y evaluación
+# -------------------------
+println("=== Entrenando en Maze ===")
+Q, rewards_train = qlearning(maze, episodes=3000)
+
+# Convertir Q a DataFrame
+acciones_n = ["Arriba","Abajo","Izquierda","Derecha"]
+df_Q = DataFrame(Q, :auto)
+rename!(df_Q, Symbol.(acciones_n))
+df_Q.State = 1:size(Q,1)
+df_Q = select(df_Q, [:State, :Arriba, :Abajo, :Izquierda, :Derecha])
+println("\nQ-table final:")
+show(df_Q, allrows=true, allcols=true)
+```
+
+Se espera que el agente elija en cada estado, la acción con mayor valor Q (valores más altos indican que la acción es más prometedora i.e. más probable de llevar al objetivo con buena recompensa). Lo anterior define la política (estrategia) que el agente sigue para tener un recorrido óptimo.
+
+Con la ayuda de la tabla Q, se tiene que el recorrido óptimo es el siguiente:
+
+```{julia}
+# Simular recorrido óptimo
+path_opt = simulate_policy(Q, maze) #Sigue la politica obtenida
+println("\nRecorrido óptimo del agente:")
+println(path_opt)
+```
+![Laberinto 6x6](ImagenesBootstrap/Recorrido.png){width=50% fig-align="center"}
+
+Al seguir esa trayectoria, el agente obtendrá una recompensa promedio de:
+```{julia}
+# Evaluar política con recompensas reales
+rewards_eval = simulate_rewards(Q, maze, episodes=1)
+println("\nRecompensa promedio (evaluación): ", mean(rewards_eval))
+```
+
+Obtener un promedio de -9.0, por como se implemento el Q-Learning, nos indica que la recompensa resulta ser bastante buena y que el agente encontro un recorrido óptimo (el cual fue previamente visto).
+
+#### Implementación de Bootstrap sobre las recompensas.
+
+A continuación se ejecutan 50 episodios completos, en cada paso, el agente elige la mejor acción según la Q-table, se guardan las recompensas acumuladas por episodio
+
+Lo siguiente simula la incertidumbre de la política sin necesidad de más entrenamiento. Con las recompensas obtenidas al seguir la tabla Q, se hacen 1000 remuestreos bootstrap y a cada una se le calcula la media, cada media representa cómo podría variar la recompensa promedio si el agente jugara “otra muestra” de episodios.
+
+Por último se obtiene un intervalo de confianza.
+
+```{julia}
+#| include: false
+# Evaluar política con recompensas reales
+rewards_eval = simulate_rewards(Q, maze, episodes=1)
+println("\nRecompensa promedio (evaluación): ", mean(rewards_eval))
+```
+
+```{julia}
+# Bootstrap
+boot_means = bootstrap(rewards_eval, B=1000)
+ic_low, ic_high = quantile(boot_means, [0.025, 0.975])
+println("\nIntervalo de confianza 95% para la media de recompensas:")
+println(" [", round(ic_low,digits=2), " , ", round(ic_high,digits=2), "]")
+
+```
+Interpretación: si repitiéramos 50 episodios muchas veces, la media de recompensa caería dentro de [-9.0 , -9.0] el 95% de las veces. ¿Por qué pasa esto? esto se debe a que la política es determinista (argmax(Q)), y desde la posición inicial siempre tomará el mismo camino. 
+
+Como se pudo observar, aplicar bootstrap sobre recompensas de Q-learning con política determinista no es muy informativo. Sin embargo, sigue siendo un buen ejercicio conceptual, porque muestra cómo bootstrap refleja la incertidumbre real. 
+
+Lo que si se puede concluir gracias al Bootstrap, es que el agente logra llegar a la meta consistentemente, obteniendo siempre una recompensa de -9 por episodio. Esto indica que la política aprendida es estable.
